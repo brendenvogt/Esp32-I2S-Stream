@@ -140,20 +140,9 @@ void send_buf(uint8_t *buf, int totalBytes)
             ss << std::hex << (int)buf[i];
         std::string str_hex = ss.str();
 
-        // Serial.println(String(str_hex.c_str()));
         int i_hex = strtol(str_hex.c_str(), nullptr, 16);
-        // Serial.println(String(i_hex));
         webSocketServer.sendData(String(i_hex));
         ss.str("");
-
-        // uint32_t x = 0;
-        // for (int j = 0; j < numBytes; j++)
-        // {
-        //     x |= (uint32_t)buf[i] << (numBits - ((j + 1) * 8));
-        //     i++;
-        // }
-        // webSocketServer.sendData(String(x));
-        // Serial.println(String(x));
     }
 }
 
