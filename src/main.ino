@@ -8,17 +8,41 @@
 #include "esp_wifi.h"
 #include "esp_event_loop.h"
 #include "WiFi.h"
-// #include "dac_cosine.c"
+
+#include <iostream>
+#include <sstream>
+#include <string>
 
 #define TAG "adc_i2s"
 
-// Physically connect pins 25 and 34
+//i2s debug
+#define I2S_BUF_DEBUG (1)
+//i2s number
+#define I2S_NUM (i2s_port_t(0))
+//i2s sample rate
+#define I2S_SAMPLE_RATE (48000)
+//i2s data bits
+#define I2S_SAMPLE_BITS (32)
+//I2S Buffer length
+#define I2S_BUFFER_LEN (512)
+//I2S Buffer length
+#define I2S_BUFFER_COUNT (2)
+//I2S read buffer length sample size times the number of samples
+#define I2S_READ_LEN (I2S_SAMPLE_BITS * I2S_BUFFER_LEN)
+//I2S data format
+// #define I2S_FORMAT (I2S_CHANNEL_FMT_RIGHT_LEFT)
+#define I2S_FORMAT (I2S_CHANNEL_FMT_ONLY_RIGHT)
 
-uint32_t SAMPLE_RATE = 120E3; //44100;//120E3;
-uint32_t NUM_SAMPLES = 64;
-uint32_t SIGNAL_FREQ = 10E3;
+//I2S channel number
+#define I2S_CHANNEL_NUM ((I2S_FORMAT < I2S_CHANNEL_FMT_ONLY_RIGHT) ? (2) : (1))
+//I2S built-in ADC unit
+#define I2S_ADC_UNIT ADC_UNIT_1
+//I2S built-in ADC channel alt: ADC1_CHANNEL_6 or ADC1_CHANNEL_0
+#define I2S_ADC_CHANNEL ADC1_CHANNEL_6
 
-#define WIFI_SSID ("BWQ")
+//Wifi SSID
+#define WIFI_SSID ("Esp32")
+//Wifi passwdord
 #define WIFI_PASSWORD ("testpass")
 WiFiServer server(80);
 
@@ -26,18 +50,13 @@ WiFiServer server(80);
 #include <WebSocketServer.h>
 WebSocketServer webSocketServer;
 
-#define READ_PIN 32
 #define LED 2
-
-static QueueHandle_t i2s_event_queue;
-static EventGroupHandle_t wifi_event_group;
 
 bool streaming = false;
 
 // init wifi with access point mode
 void initWifi()
 {
-
     WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
     Serial.print("Broadcasting AP SSID: ");
     Serial.println(WIFI_SSID);
@@ -52,9 +71,7 @@ void initWifi()
 // init Serial comms
 void initSerial()
 {
-    Serial.begin(115200);
-    //921600
-    //115200
+    Serial.begin(115200); //921600//115200
 }
 
 // init gpio for led and other functions
@@ -63,43 +80,85 @@ void initGpio()
     pinMode(LED, OUTPUT);
 }
 
+void initI2S()
+{
+    i2s_config_t i2s_config;
+    i2s_config.mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN);
+    i2s_config.sample_rate = I2S_SAMPLE_RATE;
+    i2s_config.bits_per_sample = i2s_bits_per_sample_t(I2S_SAMPLE_BITS);
+    i2s_config.dma_buf_len = I2S_BUFFER_LEN;
+    i2s_config.dma_buf_count = I2S_BUFFER_COUNT;
+    i2s_config.channel_format = I2S_FORMAT;
+    i2s_config.communication_format = I2S_COMM_FORMAT_I2S;
+
+    //install and start i2s driver
+    if (i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL) == ESP_OK)
+        Serial.println("driver OK");
+    if (i2s_set_pin(I2S_NUM, NULL) == ESP_OK)
+        Serial.println("pin OK");
+    if (i2s_set_adc_mode(I2S_ADC_UNIT, I2S_ADC_CHANNEL) == ESP_OK)
+        Serial.println("mode OK");
+    if (i2s_start(I2S_NUM) == ESP_OK)
+        Serial.println("i2s OK");
+
+    Serial.println("setup complete");
+}
+
 void setup()
 {
     initSerial();
     initGpio();
     initWifi();
+    initI2S();
+}
 
-    i2s_config_t i2s_config;
-    i2s_config.mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_ADC_BUILT_IN);
-    i2s_config.sample_rate = SAMPLE_RATE;                   // 120 KHz
-    i2s_config.dma_buf_len = NUM_SAMPLES;                   // 64
-    i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT; // Should be mono but doesn't seem to be
-    i2s_config.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT; // I2S_BITS_PER_SAMPLE_8BIT    I2S_BITS_PER_SAMPLE_16BIT    I2S_BITS_PER_SAMPLE_24BIT    I2S_BITS_PER_SAMPLE_32BIT
-    i2s_config.use_apll = true,
-    i2s_config.fixed_mclk = SAMPLE_RATE;
-    i2s_config.communication_format = I2S_COMM_FORMAT_I2S;
-    i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    i2s_config.dma_buf_count = 8;
-    //install and start i2s driver
-    i2s_driver_install(I2S_NUM_0, &i2s_config, 1, &i2s_event_queue);
-    // Connect ADC to I2S
-    i2s_set_adc_mode(ADC_UNIT_1, ADC1_CHANNEL_6);
+void disp_buf(uint8_t *buf, int length)
+{
+#if I2S_BUF_DEBUG
+    printf("======\n");
+    for (int i = 0; i < length; i++)
+    {
+        printf("%02x ", buf[i]);
+        if ((i + 1) % 4 == 0)
+        {
+            printf("\n");
+        }
+    }
+    printf("======\n");
+#endif
+}
 
-    // Generate test signal
-    int step = nearbyint(0.008192 * SIGNAL_FREQ); // ~10kHz
-    dac_cosine_enable(DAC_CHANNEL_1);             // enable the generator
-    dac_frequency_set(0, step);                   // frequency setting is common to both channels
-    dac_scale_set(DAC_CHANNEL_1, 0);              // No scaling (0~3.7v)
-    dac_offset_set(DAC_CHANNEL_1, 0);             // No Offest
-    dac_invert_set(DAC_CHANNEL_1, 2);             // Sinewave
-    dac_output_enable(DAC_CHANNEL_1);             // Start DAC
+void send_buf(uint8_t *buf, int totalBytes)
+{
+    int numBits = I2S_SAMPLE_BITS;
+    int numBytes = I2S_SAMPLE_BITS / 8;
 
-    i2s_adc_enable(I2S_NUM_0); // Start ADC
+    std::stringstream ss;
+    for (int i = 0; i < totalBytes; i++)
+    {
+        for (int i = 0; i < numBytes; ++i)
+            ss << std::hex << (int)buf[i];
+        std::string str_hex = ss.str();
+
+        // Serial.println(String(str_hex.c_str()));
+        int i_hex = strtol(str_hex.c_str(), nullptr, 16);
+        // Serial.println(String(i_hex));
+        webSocketServer.sendData(String(i_hex));
+        ss.str("");
+
+        // uint32_t x = 0;
+        // for (int j = 0; j < numBytes; j++)
+        // {
+        //     x |= (uint32_t)buf[i] << (numBits - ((j + 1) * 8));
+        //     i++;
+        // }
+        // webSocketServer.sendData(String(x));
+        // Serial.println(String(x));
+    }
 }
 
 void loop()
 {
-
     WiFiClient client = server.available();
     if (client.connected() && webSocketServer.handshake(client))
     {
@@ -114,23 +173,17 @@ void loop()
 
             if (streaming)
             {
+                int i2s_read_len = I2S_READ_LEN;
+                char *i2s_read_buff = (char *)calloc(i2s_read_len, sizeof(char));
+                i2s_adc_enable(I2S_NUM);
 
-                uint16_t i2s_read_buff[NUM_SAMPLES];
-                system_event_t evt;
-                if (xQueueReceive(i2s_event_queue, &evt, portMAX_DELAY) == pdPASS)
-                {
-                    if (evt.event_id == 2)
-                    {
-                        i2s_read_bytes(I2S_NUM_0, (char *)i2s_read_buff, NUM_SAMPLES * 2, portMAX_DELAY);
-                        for (int i = 0; i < NUM_SAMPLES; i++)
-                        {
-                            Serial.printf("%X, ", i2s_read_buff[i] & 0xFFF);
-                            webSocketServer.sendData(String(i2s_read_buff[i] & 0xFFF));
-                        }
-                        webSocketServer.sendData("\n");
-                        Serial.println();
-                    }
-                }
+                int i = i2s_read_bytes(I2S_NUM, (char *)i2s_read_buff, (size_t)i2s_read_len, portMAX_DELAY);
+                // disp_buf((uint8_t *)i2s_read_buff, i);
+                send_buf((uint8_t *)i2s_read_buff, i);
+
+                i2s_adc_disable(I2S_NUM);
+                free(i2s_read_buff);
+                i2s_read_buff = NULL;
             }
 
             data = webSocketServer.getData();
@@ -148,6 +201,8 @@ void loop()
                     streaming = false;
                 }
             }
+
+            delay(10);
         }
 
         Serial.print("Disconnecting from: ");
