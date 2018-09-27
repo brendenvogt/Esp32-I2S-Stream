@@ -104,12 +104,19 @@ void initI2S()
     Serial.println("setup complete");
 }
 
+void initADC()
+{
+    adc1_config_width(ADC_WIDTH_BIT_12);                         //Range 0-4096
+    adc1_config_channel_atten(I2S_ADC_CHANNEL, ADC_ATTEN_DB_11); //ADC_ATTEN_DB_11 = 0-3,6V //ADC_ATTEN_DB_11
+}
+
 void setup()
 {
     initSerial();
     initGpio();
     initWifi();
-    initI2S();
+    // initI2S();
+    initADC();
 }
 
 void disp_buf(uint8_t *buf, int length)
@@ -162,17 +169,20 @@ void loop()
 
             if (streaming)
             {
-                int i2s_read_len = I2S_READ_LEN;
-                char *i2s_read_buff = (char *)calloc(i2s_read_len, sizeof(char));
-                i2s_adc_enable(I2S_NUM);
+                int value = adc1_get_raw(I2S_ADC_CHANNEL);
+                webSocketServer.sendData(String(value));
 
-                int i = i2s_read_bytes(I2S_NUM, (char *)i2s_read_buff, (size_t)i2s_read_len, portMAX_DELAY);
-                // disp_buf((uint8_t *)i2s_read_buff, i);
-                send_buf((uint8_t *)i2s_read_buff, i);
+                // int i2s_read_len = I2S_READ_LEN;
+                // char *i2s_read_buff = (char *)calloc(i2s_read_len, sizeof(char));
+                // i2s_adc_enable(I2S_NUM);
 
-                i2s_adc_disable(I2S_NUM);
-                free(i2s_read_buff);
-                i2s_read_buff = NULL;
+                // int i = i2s_read_bytes(I2S_NUM, (char *)i2s_read_buff, (size_t)i2s_read_len, portMAX_DELAY);
+                // // disp_buf((uint8_t *)i2s_read_buff, i);
+                // send_buf((uint8_t *)i2s_read_buff, i);
+
+                // i2s_adc_disable(I2S_NUM);
+                // free(i2s_read_buff);
+                // i2s_read_buff = NULL;
             }
 
             data = webSocketServer.getData();
