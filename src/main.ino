@@ -200,8 +200,6 @@ void loop()
                     streaming = false;
                 }
             }
-
-            delay(10);
         }
 
         Serial.print("Disconnecting from: ");
